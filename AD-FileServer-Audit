@@ -1,0 +1,769 @@
+# Script para Auditoria de Permissões de Pastas com Dashboard HTML
+# Autor: Assistente PowerShell
+# Data: 2026
+
+# ==============================================
+# CONFIGURAÇÕES - AJUSTE AQUI CONFORME SUA NECESSIDADE
+# ==============================================
+$FolderPathToAudit = "\\fileserver\Arquivos"  # ALTERE PARA O CAMINHO CORRETO (ex: D:\FileServer, C:\Pastas, etc.)
+$OutputFolder = $env:USERPROFILE + "\Documents"  # Salva em pasta Documentos do usuário
+$OutputFileName = "Dashboard_Permissoes.html"
+$OutputPath = Join-Path $OutputFolder $OutputFileName
+
+# Configuração do Active Directory
+$ADSearchBase = "OU=DOMAIN,DC=DOMAIN,DC=local"
+$ADGroupFilter = "*"  # Filtro para grupos (ex: "FileServer_*" para grupos que começam com FileServer)
+
+# Lista de grupos/usuários a serem excluídos do relatório (case insensitive)
+$ExcludedAccounts = @(
+    "PROPRIETÁRIO CRIADOR",
+    "CREATOR OWNER",
+    "AUTORIDADE NT\SISTEMA",
+    "NT AUTHORITY\SYSTEM",
+    "BUILTIN\Administradores",
+    "BUILTIN\ADMINISTRATORS",
+    "ADMINS. DO DOMÍNIO",
+    "DOMAIN ADMINS",
+    "DOMINIO DA EMPRESA\ADMINS. DO DOMÍNIO",
+    "DOMINIO DA EMPRESA\ADMINISTRADOR",
+    "NT AUTHORITY\Authenticated Users",
+    "USUÁRIOS AUTENTICADOS",
+    "Everyone",
+    "Todos"
+)
+
+# ==============================================
+# FUNÇÃO PARA VERIFICAR SE DEVE EXCLUIR
+# ==============================================
+function Should-Exclude {
+    param(
+        [string]$AccountName
+    )
+    
+    if ([string]::IsNullOrEmpty($AccountName)) {
+        return $true
+    }
+    
+    foreach ($Excluded in $ExcludedAccounts) {
+        if ($AccountName -like "*$Excluded*" -or $AccountName -eq $Excluded) {
+            return $true
+        }
+    }
+    return $false
+}
+
+# ==============================================
+# FUNÇÃO PARA OBTER PERMISSÕES DE PASTAS
+# ==============================================
+function Get-FolderPermissions {
+    param(
+        [string]$FolderPath
+    )
+    
+    $FolderPermissions = @()
+    
+    # Verifica se o diretório existe
+    if (-not (Test-Path $FolderPath)) {
+        Write-Warning "Diretório $FolderPath não encontrado!"
+        Write-Host "ℹ️  Verifique o caminho e ajuste a variável `$FolderPathToAudit no script." -ForegroundColor Yellow
+        return $FolderPermissions
+    }
+    
+    Write-Host "📂 Auditando: $FolderPath" -ForegroundColor Cyan
+    
+    # Obtém todas as pastas do diretório
+    $Folders = Get-ChildItem -Directory -Path $FolderPath -Force -ErrorAction SilentlyContinue
+    
+    if ($Folders.Count -eq 0) {
+        Write-Warning "Nenhuma pasta encontrada em $FolderPath"
+        return $FolderPermissions
+    }
+    
+    $TotalFolders = $Folders.Count
+    $Current = 0
+    $ExcludedCount = 0
+    
+    foreach ($Folder in $Folders) {
+        $Current++
+        Write-Progress -Activity "Auditando pastas" -Status "Processando: $($Folder.Name)" -PercentComplete (($Current / $TotalFolders) * 100)
+        
+        try {
+            $Acl = Get-Acl -Path $Folder.FullName -ErrorAction SilentlyContinue
+            
+            foreach ($Access in $Acl.Access) {
+                $AccountName = $Access.IdentityReference.Value
+                
+                # Verifica se deve excluir esta conta
+                if (Should-Exclude -AccountName $AccountName) {
+                    $ExcludedCount++
+                    continue
+                }
+                
+                $FolderPermissions += [PSCustomObject]@{
+                    FolderPath = $Folder.FullName
+                    FolderName = $Folder.Name
+                    GroupUser = $AccountName
+                    Permissions = $Access.FileSystemRights
+                    IsInherited = $Access.IsInherited
+                    AccessControlType = $Access.AccessControlType
+                }
+            }
+        }
+        catch {
+            Write-Warning "Erro ao acessar permissões de: $($Folder.FullName)"
+        }
+    }
+    
+    Write-Progress -Activity "Auditando pastas" -Completed
+    Write-Host "ℹ️  $ExcludedCount entradas excluídas (sistema/administradores)" -ForegroundColor Yellow
+    return $FolderPermissions
+}
+
+# ==============================================
+# FUNÇÃO PARA OBTER MEMBROS DOS GRUPOS AD
+# ==============================================
+function Get-ADGroupMembers {
+    param(
+        [string]$SearchBase,
+        [string]$GroupFilter = "*"
+    )
+    
+    try {
+        Write-Host "👥 Coletando grupos do Active Directory..." -ForegroundColor Cyan
+        Write-Host "📁 OU Base: $SearchBase" -ForegroundColor Yellow
+        
+        $GroupMembers = @()
+        
+        # Obtém todos os grupos do AD na OU especificada
+        $Groups = Get-ADGroup -Filter $GroupFilter -SearchBase $SearchBase -Properties Members -ErrorAction SilentlyContinue
+        
+        if ($Groups.Count -eq 0) {
+            Write-Warning "Nenhum grupo encontrado na OU: $SearchBase"
+            Write-Host "ℹ️  Verifique se o caminho da OU está correto" -ForegroundColor Yellow
+            return $GroupMembers
+        }
+        
+        Write-Host "ℹ️  Encontrados $($Groups.Count) grupos na OU" -ForegroundColor Green
+        
+        $TotalGroups = $Groups.Count
+        $Current = 0
+        $ExcludedCount = 0
+        
+        foreach ($Group in $Groups) {
+            $Current++
+            Write-Progress -Activity "Coletando membros dos grupos" -Status "Processando: $($Group.Name)" -PercentComplete (($Current / $TotalGroups) * 100)
+            
+            try {
+                $Members = Get-ADGroupMember -Identity $Group.DistinguishedName -ErrorAction SilentlyContinue
+                
+                foreach ($Member in $Members) {
+                    # Verifica se deve excluir este membro
+                    if (Should-Exclude -AccountName $Member.Name) {
+                        $ExcludedCount++
+                        continue
+                    }
+                    
+                    $GroupMembers += [PSCustomObject]@{
+                        GroupName = $Group.Name
+                        GroupDN = $Group.DistinguishedName
+                        MemberName = $Member.Name
+                        MemberSamAccountName = $Member.SamAccountName
+                        MemberObjectClass = $Member.ObjectClass
+                    }
+                }
+            }
+            catch {
+                # Pular grupos vazios ou com erro
+            }
+        }
+        
+        Write-Progress -Activity "Coletando membros dos grupos" -Completed
+        Write-Host "ℹ️  $ExcludedCount membros excluídos (sistema/administradores)" -ForegroundColor Yellow
+        return $GroupMembers
+    }
+    catch {
+        Write-Warning "Erro ao acessar o Active Directory: $_"
+        Write-Host "ℹ️  Verifique se o módulo AD está instalado e se você tem permissões" -ForegroundColor Yellow
+        return @()
+    }
+}
+
+# ==============================================
+# FUNÇÃO PARA GERAR RELATÓRIO HTML
+# ==============================================
+function Generate-HtmlDashboard {
+    param(
+        [array]$FolderPermissions,
+        [array]$GroupMembers,
+        [string]$FolderPath,
+        [string]$ADSearchBase
+    )
+    
+    # Prepara dados estatísticos
+    $TotalPermissions = $FolderPermissions.Count
+    $UniqueFolders = ($FolderPermissions | Select-Object FolderPath -Unique).Count
+    $UniqueUsers = ($GroupMembers | Select-Object MemberName -Unique).Count
+    $UniqueGroups = ($GroupMembers | Select-Object GroupName -Unique).Count
+    
+    # Gera a lista de pastas para o select
+    $FolderOptions = ""
+    $UniqueFolderPaths = $FolderPermissions | Select-Object FolderPath -Unique
+    foreach ($Folder in $UniqueFolderPaths) {
+        $FolderName = Split-Path $Folder.FolderPath -Leaf
+        $FolderOptions += "<option value='$($Folder.FolderPath)'>$FolderName</option>`n"
+    }
+    
+    # Cria a estrutura do HTML
+    $Html = @"
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard de Auditoria de Permissões</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        
+        .header {
+            text-align: center;
+            padding-bottom: 30px;
+            border-bottom: 3px solid #667eea;
+            margin-bottom: 30px;
+        }
+        
+        .header h1 {
+            font-size: 32px;
+            color: #2d3748;
+            margin-bottom: 10px;
+        }
+        
+        .header .subtitle {
+            color: #718096;
+            font-size: 14px;
+        }
+        
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+            border-radius: 10px;
+            color: white;
+            text-align: center;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            transition: transform 0.3s;
+        }
+        
+        .stat-card:hover {
+            transform: translateY(-5px);
+        }
+        
+        .stat-card .number {
+            font-size: 28px;
+            font-weight: bold;
+        }
+        
+        .stat-card .label {
+            font-size: 12px;
+            opacity: 0.9;
+            margin-top: 5px;
+        }
+        
+        .controls {
+            margin-bottom: 20px;
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        
+        .controls input, .controls select {
+            padding: 10px 15px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 14px;
+            flex: 1;
+            min-width: 200px;
+            transition: border-color 0.3s;
+        }
+        
+        .controls input:focus, .controls select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .section {
+            margin-bottom: 30px;
+        }
+        
+        .section-title {
+            font-size: 22px;
+            color: #2d3748;
+            margin-bottom: 15px;
+            padding: 10px;
+            background: #f7fafc;
+            border-left: 4px solid #667eea;
+            border-radius: 4px;
+        }
+        
+        .table-container {
+            overflow-x: auto;
+            border-radius: 10px;
+            border: 1px solid #e2e8f0;
+            max-height: 600px;
+            overflow-y: auto;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        
+        table thead {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        
+        table th {
+            padding: 12px 15px;
+            text-align: left;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+        
+        table td {
+            padding: 10px 15px;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        
+        table tbody tr:hover {
+            background: #f7fafc;
+        }
+        
+        .badge {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        
+        .badge-success {
+            background: #c6f6d5;
+            color: #22543d;
+        }
+        
+        .badge-warning {
+            background: #feebc8;
+            color: #7c4a1e;
+        }
+        
+        .badge-info {
+            background: #bee3f8;
+            color: #2a4365;
+        }
+        
+        .badge-danger {
+            background: #fed7d7;
+            color: #742a2a;
+        }
+        
+        .badge-group {
+            background: #e9d8fd;
+            color: #553c9a;
+        }
+        
+        .badge-user {
+            background: #c6f6d5;
+            color: #22543d;
+        }
+        
+        .permission-full {
+            color: #e53e3e;
+            font-weight: 600;
+        }
+        
+        .permission-modify {
+            color: #dd6b20;
+            font-weight: 600;
+        }
+        
+        .permission-read {
+            color: #38a169;
+            font-weight: 600;
+        }
+        
+        .permission-write {
+            color: #d69e2e;
+            font-weight: 600;
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #718096;
+        }
+        
+        .empty-state .icon {
+            font-size: 48px;
+            margin-bottom: 15px;
+        }
+        
+        .footer {
+            text-align: center;
+            padding-top: 20px;
+            color: #718096;
+            font-size: 12px;
+            border-top: 1px solid #e2e8f0;
+            margin-top: 30px;
+        }
+        
+        @media (max-width: 768px) {
+            .container {
+                padding: 15px;
+            }
+            
+            .header h1 {
+                font-size: 24px;
+            }
+            
+            .stats {
+                grid-template-columns: 1fr 1fr;
+            }
+            
+            .controls {
+                flex-direction: column;
+            }
+            
+            .controls input, .controls select {
+                width: 100%;
+                min-width: auto;
+            }
+        }
+        
+        /* Animações */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .container {
+            animation: fadeIn 0.5s ease-out;
+        }
+        
+        .stat-card {
+            animation: fadeIn 0.5s ease-out;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📊 Dashboard de Auditoria de Permissões</h1>
+            <p class="subtitle">Pasta auditada: <strong>$FolderPath</strong> | OU: <strong>$ADSearchBase</strong> | Gerado em: $(Get-Date -Format 'dd/MM/yyyy HH:mm:ss')</p>
+        </div>
+        
+        <div class="stats">
+            <div class="stat-card">
+                <div class="number">$TotalPermissions</div>
+                <div class="label">Total de Permissões</div>
+            </div>
+            <div class="stat-card">
+                <div class="number">$UniqueFolders</div>
+                <div class="label">Pastas Auditadas</div>
+            </div>
+            <div class="stat-card">
+                <div class="number">$UniqueUsers</div>
+                <div class="label">Usuários Únicos</div>
+            </div>
+            <div class="stat-card">
+                <div class="number">$UniqueGroups</div>
+                <div class="label">Grupos AD</div>
+            </div>
+        </div>
+        
+        <div class="controls">
+            <input type="text" id="searchInput" placeholder="🔍 Buscar por pasta, usuário ou grupo..." onkeyup="filterTables()">
+            <select id="filterType" onchange="filterTables()">
+                <option value="all">Todos os Tipos</option>
+                <option value="permission">Permissões</option>
+                <option value="group">Grupos</option>
+            </select>
+            <select id="folderFilter" onchange="filterTables()">
+                <option value="all">Todas as Pastas</option>
+                $FolderOptions
+            </select>
+        </div>
+        
+        <div class="section">
+            <h2 class="section-title">📁 Permissões de Pastas</h2>
+            <div class="table-container">
+                <table id="permissionsTable">
+                    <thead>
+                        <tr>
+                            <th>Pasta</th>
+                            <th>Grupo/Usuário</th>
+                            <th>Permissão</th>
+                            <th>Tipo</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+"@
+
+    # Adiciona dados de permissões
+    if ($FolderPermissions.Count -eq 0) {
+        $Html += @"
+                        <tr>
+                            <td colspan="5">
+                                <div class="empty-state">
+                                    <div class="icon">📭</div>
+                                    <p>Nenhuma permissão encontrada. Verifique o caminho da pasta.</p>
+                                </div>
+                            </td>
+                        </tr>
+"@
+    } else {
+        foreach ($Perm in $FolderPermissions) {
+            $PermissionClass = ""
+            if ($Perm.Permissions -match "FullControl") { $PermissionClass = "permission-full" }
+            elseif ($Perm.Permissions -match "Modify") { $PermissionClass = "permission-modify" }
+            elseif ($Perm.Permissions -match "Write") { $PermissionClass = "permission-write" }
+            elseif ($Perm.Permissions -match "Read") { $PermissionClass = "permission-read" }
+            
+            $InheritedBadge = if ($Perm.IsInherited) { 
+                '<span class="badge badge-warning">Herdada</span>' 
+            } else { 
+                '<span class="badge badge-success">Direta</span>' 
+            }
+            
+            $AccessType = if ($Perm.AccessControlType -eq "Allow") {
+                '<span class="badge badge-success">Permitir</span>'
+            } else {
+                '<span class="badge badge-danger">Negar</span>'
+            }
+            
+            $Html += @"
+                        <tr class="permission-row" data-type="permission" data-folder="$($Perm.FolderPath)">
+                            <td><strong>$($Perm.FolderName)</strong><br><small style="color:#718096;">$($Perm.FolderPath)</small></td>
+                            <td>$($Perm.GroupUser)</td>
+                            <td class="$PermissionClass">$($Perm.Permissions)</td>
+                            <td>$AccessType</td>
+                            <td>$InheritedBadge</td>
+                        </tr>
+"@
+        }
+    }
+
+    $Html += @"
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2 class="section-title">👥 Membros dos Grupos AD</h2>
+            <div class="table-container">
+                <table id="groupsTable">
+                    <thead>
+                        <tr>
+                            <th>Nome do Grupo</th>
+                            <th>Membro</th>
+                            <th>Login</th>
+                            <th>Tipo</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+"@
+
+    # Adiciona dados dos grupos
+    if ($GroupMembers.Count -eq 0) {
+        $Html += @"
+                        <tr>
+                            <td colspan="4">
+                                <div class="empty-state">
+                                    <div class="icon">👥</div>
+                                    <p>Nenhum membro de grupo encontrado na OU especificada.</p>
+                                </div>
+                            </td>
+                        </tr>
+"@
+    } else {
+        foreach ($Member in $GroupMembers) {
+            $ObjectClassBadge = if ($Member.MemberObjectClass -eq "user") {
+                '<span class="badge badge-user">Usuário</span>'
+            } elseif ($Member.MemberObjectClass -eq "group") {
+                '<span class="badge badge-group">Grupo</span>'
+            } else {
+                '<span class="badge badge-info">Outro</span>'
+            }
+            
+            $Html += @"
+                        <tr class="group-row" data-type="group">
+                            <td><strong>$($Member.GroupName)</strong></td>
+                            <td>$($Member.MemberName)</td>
+                            <td>$($Member.MemberSamAccountName)</td>
+                            <td>$ObjectClassBadge</td>
+                        </tr>
+"@
+        }
+    }
+
+    $Html += @"
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <div class="footer">
+            <p>Relatório gerado automaticamente por PowerShell Dashboard | $(Get-Date -Format 'dd/MM/yyyy HH:mm:ss')</p>
+            <p style="font-size: 10px; color: #a0aec0;">⚠️ Contas de sistema e administradores foram filtradas automaticamente</p>
+        </div>
+    </div>
+    
+    <script>
+        function filterTables() {
+            const searchText = document.getElementById('searchInput').value.toLowerCase();
+            const filterType = document.getElementById('filterType').value;
+            const folderFilter = document.getElementById('folderFilter').value;
+            
+            // Filtra tabela de permissões
+            const permissionRows = document.querySelectorAll('.permission-row');
+            permissionRows.forEach(row => {
+                const text = row.textContent.toLowerCase();
+                const folderMatch = folderFilter === 'all' || row.dataset.folder === folderFilter;
+                const show = text.includes(searchText) && 
+                            (filterType === 'all' || filterType === 'permission') && 
+                            folderMatch;
+                row.style.display = show ? '' : 'none';
+            });
+            
+            // Filtra tabela de grupos
+            const groupRows = document.querySelectorAll('.group-row');
+            groupRows.forEach(row => {
+                const text = row.textContent.toLowerCase();
+                const show = text.includes(searchText) && (filterType === 'all' || filterType === 'group');
+                row.style.display = show ? '' : 'none';
+            });
+        }
+    </script>
+</body>
+</html>
+"@
+
+    return $Html
+}
+
+# ==============================================
+# EXECUÇÃO PRINCIPAL
+# ==============================================
+
+Clear-Host
+Write-Host "╔════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
+Write-Host "║        📊 DASHBOARD DE AUDITORIA DE PERMISSÕES           ║" -ForegroundColor Cyan
+Write-Host "╚════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
+Write-Host ""
+
+Write-Host "📁 Pasta a ser auditada: $FolderPathToAudit" -ForegroundColor Yellow
+Write-Host "📂 Arquivo de saída: $OutputPath" -ForegroundColor Yellow
+Write-Host "🏢 OU Base: $ADSearchBase" -ForegroundColor Yellow
+Write-Host ""
+
+# Verifica se o módulo AD está disponível
+try {
+    $ADModule = Get-Module -ListAvailable -Name ActiveDirectory
+    if (-not $ADModule) {
+        Write-Warning "Módulo ActiveDirectory não encontrado. Instale o RSAT-AD-PowerShell."
+        Write-Host "ℹ️  Execute como Administrador: Install-WindowsFeature RSAT-AD-PowerShell" -ForegroundColor Yellow
+    } else {
+        # Importa o módulo AD
+        Import-Module ActiveDirectory -ErrorAction SilentlyContinue
+        Write-Host "✅ Módulo ActiveDirectory carregado" -ForegroundColor Green
+    }
+} catch {
+    Write-Warning "Não foi possível verificar o módulo AD"
+}
+
+Write-Host ""
+Write-Host "⏳ Coletando permissões das pastas..." -ForegroundColor Yellow
+
+# Obtém permissões das pastas
+$FolderPermissions = Get-FolderPermissions -FolderPath $FolderPathToAudit
+
+Write-Host "✅ Permissões coletadas: $($FolderPermissions.Count)" -ForegroundColor Green
+Write-Host ""
+Write-Host "⏳ Coletando membros dos grupos AD..." -ForegroundColor Yellow
+
+# Obtém membros dos grupos
+$GroupMembers = Get-ADGroupMembers -SearchBase $ADSearchBase -GroupFilter $ADGroupFilter
+
+Write-Host "✅ Membros coletados: $($GroupMembers.Count)" -ForegroundColor Green
+Write-Host ""
+Write-Host "⏳ Gerando dashboard HTML..." -ForegroundColor Yellow
+
+# Gera o HTML
+$HtmlContent = Generate-HtmlDashboard -FolderPermissions $FolderPermissions -GroupMembers $GroupMembers -FolderPath $FolderPathToAudit -ADSearchBase $ADSearchBase
+
+# Salva o HTML
+try {
+    $HtmlContent | Out-File -FilePath $OutputPath -Encoding UTF8 -Force
+    Write-Host "✅ Dashboard gerado com sucesso!" -ForegroundColor Green
+    Write-Host "📁 Arquivo: $OutputPath" -ForegroundColor Cyan
+} catch {
+    Write-Error "Erro ao salvar o arquivo: $_"
+    Write-Host "Tentando salvar no diretório atual..." -ForegroundColor Yellow
+    $OutputPath = ".\Dashboard_Permissoes.html"
+    $HtmlContent | Out-File -FilePath $OutputPath -Encoding UTF8 -Force
+    Write-Host "✅ Arquivo salvo em: $OutputPath" -ForegroundColor Green
+}
+
+# Abre automaticamente no navegador
+try {
+    Start-Process $OutputPath
+    Write-Host "🌐 Abrindo dashboard no navegador..." -ForegroundColor Yellow
+}
+catch {
+    Write-Host "⚠️ Não foi possível abrir o navegador automaticamente." -ForegroundColor Yellow
+    Write-Host "📂 Abra manualmente o arquivo: $OutputPath" -ForegroundColor Yellow
+}
+
+Write-Host ""
+Write-Host "╔════════════════════════════════════════════════════════════╗" -ForegroundColor Green
+Write-Host "║           ✨ AUDITORIA CONCLUÍDA COM SUCESSO!            ║" -ForegroundColor Green
+Write-Host "╚════════════════════════════════════════════════════════════╝" -ForegroundColor Green
+Write-Host ""
+Write-Host "📋 Resumo:" -ForegroundColor Cyan
+Write-Host "   • Pastas auditadas: $(($FolderPermissions | Select-Object FolderPath -Unique).Count)" -ForegroundColor White
+Write-Host "   • Permissões encontradas: $($FolderPermissions.Count)" -ForegroundColor White
+Write-Host "   • Grupos na OU: $(($GroupMembers | Select-Object GroupName -Unique).Count)" -ForegroundColor White
+Write-Host "   • Membros coletados: $($GroupMembers.Count)" -ForegroundColor White
+Write-Host ""
