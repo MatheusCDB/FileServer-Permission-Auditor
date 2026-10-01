@@ -105,17 +105,11 @@ Exemplo da saida em HTML, consulte:
 
 ---
 
-## 🖼️ Pré-visualização do Dashboard
+## Pré-visualização do Dashboard
 
 Veja como fica o dashboard gerado pelo script com dados de exemplo:
 
-<a href="https://htmlpreview.github.io/?https://github.com/MatheusCDB/FileServer-Permission-Auditor/blob/main/docs/Dashboard_Permissoes.html" target="_blank">
-  <img src="docs/screenshots/dashboard-preview.png" alt="Preview do Dashboard" width="100%">
-</a>
-
-<div align="center">
-
-### 🔗 [**Clique aqui para ver o Dashboard interativo ao vivo**](https://htmlpreview.github.io/?https://github.com/MatheusCDB/FileServer-Permission-Auditor/blob/main/docs/Dashboard_Permissoes.html)
+[![Ver Dashboard](https://img.shields.io/badge/🔗_Ver_Dashboard_Interativo-667eea?style=for-the-badge&logo=html5&logoColor=white)](https://htmlpreview.github.io/?https://github.com/MatheusCDB/FileServer-Permission-Auditor/blob/main/docs/Dashboard_Permissoes.html)
 
 *Explore busca, filtros e todas as funcionalidades diretamente no navegador*
 
