@@ -79,7 +79,7 @@ O **FileServer Permission Auditor** é uma ferramenta PowerShell que automatiza 
 
 ---
 
-## 🔧 Pré-requisitos
+## Pré-requisitos
 
 | Requisito | Versão | Como Instalar |
 |-----------|--------|---------------|
@@ -88,11 +88,16 @@ O **FileServer Permission Auditor** é uma ferramenta PowerShell que automatiza 
 | **Permissões no FileServer** | Leitura | Solicitar ao administrador |
 | **Permissões no AD** | Leitura | Solicitar ao administrador |
 
-### Instalando o Módulo ActiveDirectory
+⚠️ O relatório contém informações sensíveis (nomes de usuários, grupos e permissões)
+⚠️ Não armazene em locais públicos ou sem proteção
+⚠️ Considere criptografar o arquivo antes de enviar por e-mail
 
-```powershell
-# Em Windows Server
-Install-WindowsFeature RSAT-AD-PowerShell
+---
 
-# Em Windows 10/11
-Add-WindowsCapability -Online -Name Rsat.ActiveDirectory.DS-LDS.Tools~~~~0.0.1.0
+## Possíveis evoluções
+
+- Interface gráfica (WPF)
+- Envio automático por e-mail
+- Integração com SIEM
+- API REST
+- Alertas automáticos para extensões novas / suspeitas
