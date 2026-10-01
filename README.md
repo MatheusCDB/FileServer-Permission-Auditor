@@ -92,6 +92,11 @@ O **FileServer Permission Auditor** é uma ferramenta PowerShell que automatiza 
 ⚠️ Não armazene em locais públicos ou sem proteção
 ⚠️ Considere criptografar o arquivo antes de enviar por e-mail
 
+## Configuração
+
+Para instruções completas de configuração, consulte:
+📖 **[Guia de Configuração Detalhado](docs/CONFIGURATION.md)**
+
 ---
 
 ## Possíveis evoluções
