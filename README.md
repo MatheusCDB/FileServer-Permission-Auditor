@@ -109,7 +109,9 @@ Exemplo da saida em HTML, consulte:
 
 Veja como fica o dashboard gerado pelo script com dados de exemplo:
 
-[![Ver Dashboard](https://img.shields.io/badge/🔗_Ver_Dashboard_Interativo-667eea?style=for-the-badge&logo=html5&logoColor=white)](https://htmlpreview.github.io/?https://github.com/MatheusCDB/FileServer-Permission-Auditor/blob/main/docs/Dashboard_Permissoes.html)
+[![Preview do Dashboard](docs/screenshots/dashboard-preview.png)](https://htmlpreview.github.io/?https://github.com/MatheusCDB/FileServer-Permission-Auditor/blob/main/docs/Dashboard_Permissoes.html)
+
+🔗 **[Clique na imagem ou aqui para explorar o dashboard interativo](https://htmlpreview.github.io/?https://github.com/MatheusCDB/FileServer-Permission-Auditor/blob/main/docs/Dashboard_Permissoes.html)**
 
 *Explore busca, filtros e todas as funcionalidades diretamente no navegador*
 
