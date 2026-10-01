@@ -101,7 +101,6 @@ Para resolução de erros, consulte:
 **[Guia de Configuração Detalhado](docs/CONFIGURATION.md)**
 
 Exemplo da saida em HTML, consulte:
-
 **[Guia de Configuração Detalhado](docs/Dashboard_Permissoes.html)**
 
 ---
