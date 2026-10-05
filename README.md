@@ -114,4 +114,3 @@ Veja como fica o dashboard gerado pelo script com dados de exemplo:
 - Envio automático por e-mail
 - Integração com SIEM
 - API REST
-- Alertas automáticos para extensões novas / suspeitas
